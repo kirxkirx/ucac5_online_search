@@ -1,0 +1,101 @@
+name: test
+
+# The installations update themselves only to a commit whose check runs have
+# all passed (git_ucac5_automated_update.sh), so every job here is a gate.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+
+  # Install the service under Apache as README.md describes, with the synthetic
+  # test catalog in place of UCAC5, and query it with curl as VaST does.
+  apache:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Install Apache and shellcheck
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y apache2 shellcheck
+        sudo a2enmod cgi
+
+    - name: Check shell script syntax
+      run: |
+        for i in git_ucac5_automated_update.sh tests/*.sh ;do bash -n "$i" || exit 1 ;done
+        shellcheck git_ucac5_automated_update.sh tests/*.sh
+
+    - name: Compile with all warnings as errors
+      run: |
+        cc -std=c99 -pedantic -Wall -Wextra -Werror -O2 -o /dev/null src/search_ucac5.c -lm
+
+    - name: Build and run the offline tests
+      run: |
+        make test
+
+    - name: Install outside of the web tree, with the synthetic catalog
+      run: |
+        sudo cp -r "$GITHUB_WORKSPACE" /opt/ucac5_online_search
+        sudo python3 tests/make_test_catalog.py /opt/ucac5_test_catalog
+        sudo ln -s /opt/ucac5_test_catalog /opt/ucac5_online_search/catalog
+        sudo make -C /opt/ucac5_online_search clean all
+
+    - name: Link the service into cgi-bin
+      run: |
+        sudo ln -s /opt/ucac5_online_search/cgi-bin/ucac5 /usr/lib/cgi-bin/ucac5
+        sudo systemctl restart apache2
+
+    - name: Search through the web server
+      run: |
+        tests/check_http.sh --fixture http://localhost/cgi-bin/ucac5/search_ucac5.py
+
+    - name: A request without a file gets a one-line error
+      run: |
+        HTTP_CODE=$(curl --silent --output reply.txt --write-out '%{http_code}' -F brightmag=1 http://localhost/cgi-bin/ucac5/search_ucac5.py)
+        cat reply.txt
+        test "$HTTP_CODE" = "400"
+        test "$(wc -l < reply.txt)" -eq 1
+        grep -q '^# ERROR: ' reply.txt
+
+    - name: Only the CGI script is reachable
+      run: |
+        for i in Makefile search_ucac5 catalog/z001 .git/HEAD ;do
+         HTTP_CODE=$(curl --silent --output /dev/null --write-out '%{http_code}' "http://localhost/cgi-bin/ucac5/$i")
+         echo "$i $HTTP_CODE"
+         test "$HTTP_CODE" = "404" || exit 1
+        done
+
+    - name: Display Apache Error Log
+      if: failure()
+      run: |
+        sudo cat /var/log/apache2/error.log
+
+  # The CGI script and the test tools on old and new Python versions
+  # (the official images come with a C compiler and make).
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['3.6', '3.8', '3.11', '3.14']
+    container: python:${{ matrix.version }}
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Build and run the offline tests
+      run: |
+        python3 --version
+        make test
