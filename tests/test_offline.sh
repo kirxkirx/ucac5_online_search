@@ -156,6 +156,15 @@ check "read error on a zone file: exit code 2 and no output" unreadable_zone_is_
 
 echo "=== the CGI script ==="
 
+# The web server reaches this directory: anything else in it could be started by its URL
+served_directory_holds_only_the_cgi_script() {
+ local entries
+ entries="$(find "$ROOT_DIR/cgi-bin/ucac5" -mindepth 1 -maxdepth 1 | sed 's#.*/##' | sort | tr '\n' ' ')"
+ [ "$entries" = "search_ucac5.py " ] || { echo "cgi-bin/ucac5 holds: $entries"; return 1; }
+}
+check "cgi-bin/ucac5 holds nothing but search_ucac5.py" served_directory_holds_only_the_cgi_script
+
+
 cgi "$WORK/post" --file "$DATA/fixture_main_positions.txt" --field 'submit=Upload Image' --field brightmag=0.000000 --field faintmag=14.000000 --field searcharcsec=5.000000
 check "search request as VaST sends it" is_search_reply "$WORK/post" "$DATA/fixture_main_expected.txt"
 

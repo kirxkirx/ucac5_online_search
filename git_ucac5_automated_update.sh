@@ -49,6 +49,9 @@ main() {
  LANGUAGE=C
  export LANGUAGE LC_ALL
 
+ # The web server may run as another user: everything written here must stay readable
+ umask 022
+
  local FORCE=0
  local VERBOSE=0
  if [ -t 1 ]; then
@@ -82,6 +85,13 @@ main() {
  cd "$ROOT_DIR" || return 1
  if [ ! -d .git ]; then
   echo "ERROR: $ROOT_DIR is not a git checkout" >&2
+  return 1
+ fi
+ # git refuses to work in a checkout that belongs to somebody else ("dubious
+ # ownership"). Checked before anything is written, so that a run by the wrong
+ # user (root, say) leaves no file behind that the owner cannot replace.
+ if ! git rev-parse --verify --quiet HEAD > /dev/null 2>&1; then
+  echo "ERROR: git cannot use the checkout $ROOT_DIR - run this script as its owner ($(stat -c %U "$ROOT_DIR/.git" 2> /dev/null)), not as $(id -un)" >&2
   return 1
  fi
 
@@ -211,7 +221,11 @@ main() {
   echo "ERROR: version $NEW_VERSION failed after the switch, returning to $OLD_VERSION. The log:" >&2
   cat "$LOG_FILE" >&2
   echo "$NEW_COMMIT" > "$FAILED_COMMIT_FILE"
-  if git reset --hard --quiet "$OLD_COMMIT" && make > "$LOG_FILE" 2>&1; then
+  # If the rebuild fails (bin/ not writable, say), the program built earlier
+  # for the old version may still be in place: then the old version is back.
+  if git reset --hard --quiet "$OLD_COMMIT" &&
+   { make > "$LOG_FILE" 2>&1 || [ "$(bin/search_ucac5 --version 2> /dev/null)" = "# UCAC5 online search $OLD_VERSION" ]; } &&
+   tests/test_offline.sh >> "$LOG_FILE" 2>&1; then
    echo "Version $OLD_VERSION is restored" >&2
   else
    cat "$LOG_FILE" >&2

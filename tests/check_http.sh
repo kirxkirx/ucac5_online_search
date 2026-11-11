@@ -43,26 +43,44 @@ if [ "${1:-}" = "--fixture" ]; then
  FAINT_MAG=14.000000
  SEARCH_RADIUS_ARCSEC=5.000000
 fi
+case "${1:-}" in
+-*)
+ echo "Usage: $0 [--fixture] [URL]" >&2
+ exit 1
+ ;;
+esac
 URL="${1:-http://localhost/cgi-bin/ucac5/search_ucac5.py}"
 
 REPLY="$(mktemp "${TMPDIR:-/tmp}/ucac5_reply_XXXXXX")" || exit 1
-trap 'rm -f "$REPLY"' EXIT
+CURL_ERRORS="$(mktemp "${TMPDIR:-/tmp}/ucac5_curl_XXXXXX")" || exit 1
+trap 'rm -f "$REPLY" "$CURL_ERRORS"' EXIT
 
 echo "Checking $URL"
 
-# 1. A plain GET: a current server answers with its version
-if ! HTTP_CODE="$(curl --silent --show-error --insecure --connect-timeout 10 --max-time 60 --output "$REPLY" --write-out '%{http_code}' "$URL")"; then
- echo "ERROR: cannot connect" >&2
+# 1. A plain GET: a current server answers with its version. The servers that
+# predate this repository answer a GET with an error page or a broken response,
+# which is not a failure of this check: the search below decides.
+HTTP_CODE="$(curl --silent --show-error --insecure --connect-timeout 10 --max-time 60 --output "$REPLY" --write-out '%{http_code}' "$URL" 2> "$CURL_ERRORS")"
+if [ "$HTTP_CODE" = "000" ]; then
+ echo "ERROR: cannot connect: $(cat "$CURL_ERRORS")" >&2
  exit 1
 fi
 if [ "$HTTP_CODE" = "200" ] && head -n 1 "$REPLY" | grep -q '^# UCAC5 online search '; then
  echo "Version reported: $(head -n 1 "$REPLY" | cut -c3-)"
+elif head -n 1 "$REPLY" | grep -q '^# ERROR: '; then
+ echo "The service answers, but reports an error (HTTP $HTTP_CODE): $(head -n 1 "$REPLY" | cut -c3-)"
+ echo "The reason is in the web server's error log."
 else
- echo "No version reported (HTTP $HTTP_CODE on GET): this server runs the code that predates this repository,"
- echo "or the request does not reach search_ucac5.py"
- if [ "$HTTP_CODE" = "403" ]; then
-  echo "HTTP 403 for a freshly installed service usually means that the web server refuses to follow the cgi-bin/ucac5 symlink, see README.md"
- fi
+ case "$HTTP_CODE" in
+ 403 | 404)
+  echo "HTTP $HTTP_CODE on GET: the request does not reach search_ucac5.py."
+  echo "A freshly installed service: see \"If the web server answers 403 or 404\" in README.md"
+  ;;
+ *)
+  echo "No version reported (HTTP $HTTP_CODE on GET): the server runs the code that predates this"
+  echo "repository, or search_ucac5.py cannot start (the reason is in the web server's error log)"
+  ;;
+ esac
 fi
 
 # 2. A search, with the options VaST gives to curl

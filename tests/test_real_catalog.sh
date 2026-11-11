@@ -35,7 +35,8 @@ if [ ! -x "$ROOT_DIR/bin/search_ucac5" ]; then
 fi
 
 # The catalog is 900 zone files, 107758513 records of 52 bytes
-# shellcheck disable=SC2012  # the names of interest are z001 ... z900, nothing exotic
+# (the names of interest are z001 ... z900, nothing exotic for ls)
+# shellcheck disable=SC2012
 CATALOG_SUMMARY="$(ls -lnL "$ROOT_DIR/catalog/" | awk '$NF ~ /^z[0-9][0-9][0-9]$/ { n++; bytes += $5 } END { printf "%d files, %.0f bytes", n, bytes }')"
 if [ "$CATALOG_SUMMARY" != "900 files, 5603442676 bytes" ]; then
  echo "ERROR: $ROOT_DIR/catalog holds $CATALOG_SUMMARY in zone files; the complete catalog is 900 files (z001 ... z900), 5603442676 bytes.

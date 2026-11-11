@@ -63,6 +63,8 @@ def main():
         'SCRIPT_FILENAME': script,
         'QUERY_STRING': '',
         'PYTHONDONTWRITEBYTECODE': '1',
+        # a busy machine must not fail the tests (see wait_for_lower_load() in search_ucac5.py)
+        'UCAC5_SKIP_LOAD_CHECK': '1',
     }
     if method == 'POST':
         environment['CONTENT_TYPE'] = 'multipart/form-data; boundary=' + BOUNDARY

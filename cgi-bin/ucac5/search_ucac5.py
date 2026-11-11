@@ -53,10 +53,18 @@ DEFAULT_BRIGHT_MAG = '0'
 DEFAULT_FAINT_MAG = '16'
 DEFAULT_SEARCH_RADIUS_ARCSEC = '10'
 
-# 5-minute load average per CPU core: wait above the first, refuse above the second
+# The 5-minute load average above which a request waits, and above which it is
+# refused (the limits of the original service, raised on machines with many cores).
+# The wait stays well below Apache's default Timeout of 60 s: a timed-out request
+# gets the web server's own error page, which VaST would take for search results.
+BUSY_LOAD = 40.0
+OVERLOAD = 50.0
 BUSY_LOAD_PER_CORE = 1.5
 OVERLOAD_PER_CORE = 2.0
-MAX_WAIT_FOR_LOWER_LOAD_SEC = 120
+MAX_WAIT_FOR_LOWER_LOAD_SEC = 40
+# Set by the tests (tests/cgi_request.py) so that a busy machine does not fail them.
+# A web client cannot set it: request headers reach a CGI script as HTTP_* variables.
+SKIP_LOAD_CHECK_VARIABLE = 'UCAC5_SKIP_LOAD_CHECK'
 
 
 class RequestError(Exception):
@@ -90,17 +98,22 @@ def log(message):
 
 def wait_for_lower_load():
     """Hold the request while the machine is busy; give up if it is overloaded."""
+    if os.environ.get(SKIP_LOAD_CHECK_VARIABLE):
+        return
     try:
         cores = os.cpu_count() or 1
+        busy_load = max(BUSY_LOAD, BUSY_LOAD_PER_CORE * cores)
+        overload = max(OVERLOAD, OVERLOAD_PER_CORE * cores)
         deadline = time.time() + MAX_WAIT_FOR_LOWER_LOAD_SEC
         while True:
             load = os.getloadavg()[1]
-            if load <= BUSY_LOAD_PER_CORE * cores:
+            if load <= busy_load:
                 return
-            if load > OVERLOAD_PER_CORE * cores or time.time() > deadline:
+            time_left = deadline - time.time()
+            if load > overload or time_left <= 0:
                 raise RequestError('503 Service Unavailable',
                                    'the server is too busy (load %.1f), try another one' % load)
-            time.sleep(random.uniform(1.0, 15.0))
+            time.sleep(min(time_left, random.uniform(1.0, 10.0)))
     except (OSError, AttributeError):
         # no load information on this system: carry on
         return
